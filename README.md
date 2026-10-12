@@ -12,7 +12,7 @@ The panel starts at 280 points wide and can shrink to 240. Each list has its own
 - A transparent window with rounded material cards and adjustable opacity.
 - Menu-bar click to show or hide; Escape, the close button, or an outside click to dismiss.
 - Pinning to keep the panel open, a draggable header, and remembered window settings.
-- Local search across list names, task titles, and notes.
+- Local search across visible list names, task titles, and notes.
 - Direct Google Tasks API access, with a refresh check every 60 seconds while running.
 - A local snapshot for offline viewing and macOS Keychain storage for sign-in credentials.
 
@@ -58,6 +58,8 @@ Import the file locally; never add it to Git, an issue, or a pull request. The a
 | Quit | Right-click the menu-bar icon and choose Quit |
 
 The connection indicator distinguishes a live connection from an offline or saved view. The app must remain running to refresh; it does not install a background service.
+
+Google's Tasks API does not expose the website's list-visibility checkboxes. The app shows all lists by default and supports a saved local selection by list ID; see [local list selection](docs/ARCHITECTURE.md#local-list-selection). This selection affects the panel, search, and counts, and remains saved across restarts.
 
 ## Development
 

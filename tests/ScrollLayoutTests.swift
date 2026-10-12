@@ -15,6 +15,7 @@ final class TaskStore: ObservableObject {
     @Published var error: String? = nil
     @Published var searchText = ""
     let canEdit = false
+    var visibleLists: [TaskList] { lists }
     var filteredLists: [TaskList] { lists }
 
     init() {

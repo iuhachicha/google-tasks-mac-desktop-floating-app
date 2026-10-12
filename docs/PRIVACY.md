@@ -16,7 +16,7 @@ The app checks for updates every 60 seconds while running; opening or manually r
 | --- | --- |
 | Desktop OAuth client configuration and access/refresh tokens | macOS Keychain, under service `com.iuhachicha.floattasks.google`; configured as device-only, without iCloud Keychain synchronization. |
 | Latest task snapshot and sync timestamps | `~/Library/Application Support/com.iuhachicha.floattasks/tasks.json`; replaced after a successful sync and kept for offline viewing. |
-| Window geometry, opacity, pinning, and collapsed lists | Local macOS application preferences. |
+| Window geometry, opacity, pinning, collapsed lists, and selected list IDs | Local macOS application preferences. |
 
 The cache directory and snapshot use owner-only file permissions. The snapshot is JSON, not a separately encrypted database. Your Mac’s security and backup settings still apply. The original client JSON you downloaded is outside the app’s storage and remains under your control.
 
@@ -24,7 +24,7 @@ Starting a new sign-in clears the previous task view and snapshot before opening
 
 ## Disconnecting and deleting data
 
-Choose **Disconnect** in Settings to cancel syncing, remove saved sign-in tokens from Keychain, and delete the local task snapshot. The app retains the Desktop client configuration and display preferences for later use. It reports an error if local deletion fails.
+Choose **Disconnect** in Settings to cancel syncing, remove saved sign-in tokens from Keychain, delete the local task snapshot, and reset the list selection. The app retains the Desktop client configuration and other display preferences for later use. It reports an error if local deletion fails.
 
 Disconnect does not delete tasks from Google, revoke the authorization at Google, or remove copies in your backups. You can separately revoke access in your Google Account. Revocation blocks further access but does not itself erase the local snapshot; use Disconnect to clear it.
 

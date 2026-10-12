@@ -32,6 +32,12 @@ The client loads all pages of task lists and each list’s active tasks. A succe
 
 New authorization clears the previous snapshot before opening the browser and aborts if that cache cannot be deleted. Changing the Desktop client clears the previous view as well. Account changes invalidate outstanding refreshes, preventing late responses from restoring another account’s tasks.
 
+## Local list selection
+
+`TaskStore` keeps complete API results in `lists` and exposes the selected subset through `visibleLists`. Search, panel cards, and counts use this subset. `applySelectedListIDs(_:)` saves an explicit whitelist in the `FloatTasks.selectedListIDs` macOS preference. An absent preference shows all lists; an empty array shows none. Selection uses IDs so a list rename preserves visibility and newly created lists stay hidden when a whitelist exists. There is currently no list-selection editor in Settings.
+
+The selection survives refreshes and restarts. Disconnecting, starting a new interactive sign-in, or importing a different Desktop client resets it to avoid carrying one account's IDs into another account. Reimporting the same client preserves the selection. This is a local display filter: the API and offline snapshot still include all lists, and it does not read or change the website's visibility settings.
+
 ## Authentication boundary
 
 The authorization request opens in the system browser. PKCE binds the token exchange to that attempt, and random state binds the callback to the original request. The callback listener is bound to `127.0.0.1` on an available port, validates the request, and shuts down after success, cancellation, or timeout.

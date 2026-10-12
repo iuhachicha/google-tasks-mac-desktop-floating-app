@@ -41,7 +41,7 @@ struct RootView: View {
                 .floatingCard(radius: 16)
             }
 
-            if store.lists.isEmpty {
+            if store.visibleLists.isEmpty {
                 emptyState
                     .frame(maxHeight: .infinity)
             } else {
@@ -82,7 +82,7 @@ struct RootView: View {
                 .padding(.horizontal, -4)
             }
 
-            if let error = store.error, !error.isEmpty, !store.lists.isEmpty {
+            if let error = store.error, !error.isEmpty, !store.visibleLists.isEmpty {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.circle")
                     Text(error).lineLimit(2)
@@ -119,8 +119,8 @@ struct RootView: View {
                 ProgressView()
                     .controlSize(.mini)
                     .scaleEffect(0.8)
-            } else if !store.lists.isEmpty {
-                Text("\(store.lists.reduce(0) { $0 + $1.tasks.filter { !$0.isCompleted }.count })")
+            } else if !store.visibleLists.isEmpty {
+                Text("\(store.visibleLists.reduce(0) { $0 + $1.tasks.filter { !$0.isCompleted }.count })")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -148,18 +148,18 @@ struct RootView: View {
                 .font(.system(size: 34, weight: .ultraLight))
                 .foregroundStyle(.secondary)
             VStack(spacing: 6) {
-                Text(store.isLoading ? "Getting your tasks…" : (hasConnectedEmptyState ? "No task lists yet" : "A little room for your tasks"))
+                Text(emptyStateTitle)
                     .font(.system(size: 14, weight: .medium))
                     .multilineTextAlignment(.center)
-                Text(store.isLoading ? "Your lists will appear here." : (hasConnectedEmptyState ? "Create a list in Google Tasks,\nand it will appear here." : "Your Google Tasks lists,\none below the other."))
+                Text(emptyStateDescription)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
             }
             if !store.isLoading {
-                Button(hasConnectedEmptyState ? "Open Google Tasks" : "Connect Google Tasks") {
-                    if hasConnectedEmptyState {
+                Button(hasConnectedEmptyState || hasHiddenLists ? "Open Google Tasks" : "Connect Google Tasks") {
+                    if hasConnectedEmptyState || hasHiddenLists {
                         store.openGoogleTasks()
                     } else {
                         store.showConnection()
@@ -187,6 +187,22 @@ struct RootView: View {
 
     private var hasConnectedEmptyState: Bool {
         store.connectionState == "Live" && store.lists.isEmpty
+    }
+
+    private var hasHiddenLists: Bool {
+        !store.lists.isEmpty && store.visibleLists.isEmpty
+    }
+
+    private var emptyStateTitle: String {
+        if store.isLoading { return "Getting your tasks…" }
+        if hasHiddenLists { return "No selected lists available" }
+        return hasConnectedEmptyState ? "No task lists yet" : "A little room for your tasks"
+    }
+
+    private var emptyStateDescription: String {
+        if store.isLoading { return "Your lists will appear here." }
+        if hasHiddenLists { return "Your saved list selection is empty\nor no longer available." }
+        return hasConnectedEmptyState ? "Create a list in Google Tasks,\nand it will appear here." : "Your Google Tasks lists,\none below the other."
     }
 
     private var footer: some View {

@@ -11,18 +11,29 @@ final class TaskStore: ObservableObject {
     @Published var connectionState = "Snapshot"
     @Published var error: String?
     @Published var searchText = ""
+    // A missing preference shows all lists. An explicit empty set shows none;
+    // explicit IDs keep newly discovered lists hidden until selected.
+    @Published private(set) var selectedListIDs: Set<String>?
     let canEdit = false
     let oauth = GoogleOAuth()
     var onConnection: (() -> Void)?
+    private let defaults: UserDefaults
+    private static let selectionPreference = "FloatTasks.selectedListIDs"
     private lazy var client = GoogleTasksClient(oauth: oauth)
     private var timer: Timer?
     private var syncTask: Task<Void, Never>?
     private var generation = 0
 
+    var visibleLists: [TaskList] {
+        guard let selectedListIDs else { return lists }
+        return lists.filter { selectedListIDs.contains($0.id) }
+    }
+
     var filteredLists: [TaskList] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return lists }
-        return lists.compactMap { list in
+        let visible = visibleLists
+        guard !query.isEmpty else { return visible }
+        return visible.compactMap { list in
             if list.title.localizedCaseInsensitiveContains(query) { return list }
             var copy = list
             copy.tasks = list.tasks.filter { $0.title.localizedCaseInsensitiveContains(query)
@@ -31,12 +42,45 @@ final class TaskStore: ObservableObject {
         }
     }
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        selectedListIDs = defaults.stringArray(forKey: Self.selectionPreference).map(Set.init)
         loadCache()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshIfNeeded() }
         }
         Task { @MainActor [weak self] in self?.refreshIfNeeded() }
+    }
+
+    func isListVisible(id: String) -> Bool {
+        selectedListIDs?.contains(id) ?? true
+    }
+
+    func setListVisible(id: String, visible: Bool) {
+        // Keeping the default "all" mode when nothing is deselected preserves
+        // its behavior for future API lists.
+        if selectedListIDs == nil && visible { return }
+        var updated = selectedListIDs ?? Set(lists.map(\.id))
+        if visible { updated.insert(id) } else { updated.remove(id) }
+        applySelectedListIDs(updated)
+    }
+
+    func applySelectedListIDs(_ ids: Set<String>) {
+        selectedListIDs = ids
+        defaults.set(ids.sorted(), forKey: Self.selectionPreference)
+        updateCount()
+    }
+
+    func showAllLists() {
+        resetListSelection()
+        updateCount()
+    }
+
+    func hideAllLists() { applySelectedListIDs([]) }
+
+    private func resetListSelection() {
+        selectedListIDs = nil
+        defaults.removeObject(forKey: Self.selectionPreference)
     }
 
     private func loadCache() {
@@ -49,7 +93,9 @@ final class TaskStore: ObservableObject {
         updateCount()
     }
     private func updateCount() {
-        status = "\(lists.count) lists · \(lists.reduce(0) { $0 + $1.tasks.count }) tasks"
+        let visible = visibleLists
+        let taskCount = visible.reduce(0) { $0 + $1.tasks.count }
+        status = "\(visible.count) \(visible.count == 1 ? "list" : "lists") · \(taskCount) \(taskCount == 1 ? "task" : "tasks")"
     }
     func refreshIfNeeded() {
         guard oauth.isSignedIn, !isLoading else { return }
@@ -100,8 +146,9 @@ final class TaskStore: ObservableObject {
         }
     }
     func importClient(from url: URL) throws {
+        let previousClientID = oauth.configuredClientID
         try oauth.importClient(from: url)
-        if !oauth.isSignedIn { try clearCachedTasks() }
+        if previousClientID != oauth.configuredClientID { try clearCachedTasks() }
     }
     private func clearCachedTasks() throws {
         generation += 1
@@ -109,6 +156,7 @@ final class TaskStore: ObservableObject {
         syncTask = nil
         isLoading = false
         lists = []
+        resetListSelection()
         lastSynced = nil
         connectionState = "Not connected"
         status = "Connect your Google Tasks"
