@@ -12,6 +12,7 @@ final class GoogleOAuth: ObservableObject {
     @Published private(set) var isConfigured = false
     @Published private(set) var isSignedIn = false
     @Published private(set) var isAuthorizing = false
+    @Published private(set) var hasWriteAccess = false
     var configuredClientID: String? { client?.clientID }
 
     private var client: GoogleDesktopClient?
@@ -32,9 +33,10 @@ final class GoogleOAuth: ObservableObject {
                 isConfigured = true
                 if let saved = try GoogleOAuthKeychain.read(account: "tokens") {
                     let restored = try JSONDecoder().decode(GoogleOAuthTokens.self, from: saved)
-                    if restored.clientID == stored.clientID && !restored.refreshToken.isEmpty {
+                    if restored.clientID == stored.clientID && !restored.refreshToken.isEmpty && restored.hasReadAccess {
                         tokens = restored
                         isSignedIn = true
+                        hasWriteAccess = restored.hasWriteAccess
                     }
                 }
             }
@@ -63,6 +65,7 @@ final class GoogleOAuth: ObservableObject {
             try GoogleOAuthKeychain.remove(account: "tokens")
             tokens = nil
             isSignedIn = false
+            hasWriteAccess = false
         }
         try GoogleOAuthKeychain.save(try JSONEncoder().encode(configuration), account: "desktop-client")
         client = configuration
@@ -98,6 +101,7 @@ final class GoogleOAuth: ObservableObject {
             tokens = result
             startupError = nil
             isSignedIn = true
+            hasWriteAccess = result.hasWriteAccess
         } catch is CancellationError { throw GoogleOAuthError.cancelled }
     }
 
@@ -128,15 +132,18 @@ final class GoogleOAuth: ObservableObject {
                 ])
                 try Task.checkCancellation()
                 guard generation == currentGeneration else { throw GoogleOAuthError.cancelled }
-                let renewed = try response.tokens(clientID: client.clientID, previousRefreshToken: saved.refreshToken)
+                let renewed = try response.tokens(clientID: client.clientID, previousRefreshToken: saved.refreshToken,
+                                                  previousGrantedScopes: saved.grantedScopes)
                 try GoogleOAuthKeychain.save(try JSONEncoder().encode(renewed), account: "tokens")
                 tokens = renewed
                 isSignedIn = true
+                hasWriteAccess = renewed.hasWriteAccess
                 return renewed
             } catch GoogleOAuthError.invalidGrant {
                 guard generation == currentGeneration else { throw GoogleOAuthError.cancelled }
                 tokens = nil
                 isSignedIn = false
+                hasWriteAccess = false
                 try GoogleOAuthKeychain.remove(account: "tokens")
                 throw GoogleOAuthError.signInExpired
             }
@@ -154,6 +161,7 @@ final class GoogleOAuth: ObservableObject {
         refreshTask = nil
         tokens = nil
         isSignedIn = false
+        hasWriteAccess = false
         try GoogleOAuthKeychain.remove(account: "tokens")
         startupError = nil
     }
@@ -191,7 +199,9 @@ final class GoogleOAuth: ObservableObject {
                 "redirect_uri": redirect.absoluteString, "grant_type": "authorization_code"
             ])
             try Task.checkCancellation()
-            return try response.tokens(clientID: client.clientID, previousRefreshToken: nil)
+            // An upgrade must receive an explicit write grant. Keep any previous
+            // authorization until this result has passed validation and is saved.
+            return try response.tokens(clientID: client.clientID, previousRefreshToken: nil, requireWriteAccess: true)
         } catch GoogleOAuthError.invalidGrant { throw GoogleOAuthError.exchangeExpired }
     }
 }
@@ -228,10 +238,40 @@ struct GoogleOAuthTokens: Codable {
     let accessToken: String
     let refreshToken: String
     let expiresAt: Date
+    let grantedScopes: Set<String>
+
+    var hasWriteAccess: Bool { grantedScopes.contains(GoogleOAuthSecurity.tasksScope) }
+    var hasReadAccess: Bool { hasWriteAccess || grantedScopes.contains(GoogleOAuthSecurity.tasksReadOnlyScope) }
+
+    init(clientID: String, accessToken: String, refreshToken: String, expiresAt: Date,
+         grantedScopes: Set<String> = [GoogleOAuthSecurity.tasksReadOnlyScope]) {
+        self.clientID = clientID
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken
+        self.expiresAt = expiresAt
+        self.grantedScopes = grantedScopes
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case clientID, accessToken, refreshToken, expiresAt, grantedScopes
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        clientID = try values.decode(String.self, forKey: .clientID)
+        accessToken = try values.decode(String.self, forKey: .accessToken)
+        refreshToken = try values.decode(String.self, forKey: .refreshToken)
+        expiresAt = try values.decode(Date.self, forKey: .expiresAt)
+        // Versions that did not persist scope requested read-only access. Never
+        // infer a write grant from a stored token that lacks scope metadata.
+        grantedScopes = try values.decodeIfPresent(Set<String>.self, forKey: .grantedScopes)
+            ?? [GoogleOAuthSecurity.tasksReadOnlyScope]
+    }
 }
 
 enum GoogleOAuthSecurity {
-    static let tasksScope = "https://www.googleapis.com/auth/tasks.readonly"
+    static let tasksScope = "https://www.googleapis.com/auth/tasks"
+    static let tasksReadOnlyScope = "https://www.googleapis.com/auth/tasks.readonly"
     static func base64URL(_ data: Data) -> String {
         data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
@@ -296,17 +336,24 @@ struct GoogleOAuthTokenResponse: Decodable {
     let scope: String?
     let error: String?
 
-    func tokens(clientID: String, previousRefreshToken: String?) throws -> GoogleOAuthTokens {
+    func tokens(clientID: String, previousRefreshToken: String?, previousGrantedScopes: Set<String>? = nil,
+                requireWriteAccess: Bool = false) throws -> GoogleOAuthTokens {
         guard let access = access_token, !access.isEmpty, access.utf8.count <= 32768,
               let expiry = expires_in, expiry.isFinite, expiry > 0, expiry <= 604800,
               token_type?.lowercased() == "bearer" else { throw GoogleOAuthError.invalidTokenResponse }
-        if let scope, !scope.split(separator: " ").contains(Substring(GoogleOAuthSecurity.tasksScope)) {
+        let grantedScopes = scope.map { Set($0.split(separator: " ").map(String.init)) } ?? previousGrantedScopes ?? []
+        if requireWriteAccess && !grantedScopes.contains(GoogleOAuthSecurity.tasksScope) {
+            throw GoogleOAuthError.tasksWritePermissionMissing
+        }
+        guard grantedScopes.contains(GoogleOAuthSecurity.tasksScope)
+                || grantedScopes.contains(GoogleOAuthSecurity.tasksReadOnlyScope) else {
             throw GoogleOAuthError.tasksPermissionMissing
         }
         guard let refresh = refresh_token ?? previousRefreshToken, !refresh.isEmpty, refresh.utf8.count <= 32768 else {
             throw GoogleOAuthError.refreshTokenMissing
         }
-        return GoogleOAuthTokens(clientID: clientID, accessToken: access, refreshToken: refresh, expiresAt: Date().addingTimeInterval(expiry))
+        return GoogleOAuthTokens(clientID: clientID, accessToken: access, refreshToken: refresh,
+                                 expiresAt: Date().addingTimeInterval(expiry), grantedScopes: grantedScopes)
     }
 }
 
@@ -539,7 +586,7 @@ enum GoogleOAuthError: LocalizedError {
     case cancelled, timedOut, browserUnavailable, listenerUnavailable, randomUnavailable
     case keychainRead, keychainWrite, keychainRemove
     case authorizationDenied, providerRejected, clientRejected, invalidGrant, signInExpired, exchangeExpired
-    case networkUnavailable, temporarilyUnavailable, invalidTokenResponse, tasksPermissionMissing, refreshTokenMissing
+    case networkUnavailable, temporarilyUnavailable, invalidTokenResponse, tasksPermissionMissing, tasksWritePermissionMissing, refreshTokenMissing
 
     var errorDescription: String? {
         switch self {
@@ -556,7 +603,7 @@ enum GoogleOAuthError: LocalizedError {
         case .keychainRead: return "Couldn’t read Google credentials from Keychain. Unlock your login keychain and restart Float Tasks, or import your Desktop client again."
         case .keychainWrite: return "Couldn’t save Google credentials in Keychain. Unlock your login keychain and try again."
         case .keychainRemove: return "Couldn’t remove the saved Google sign-in from Keychain. Unlock your login keychain and choose Sign out again."
-        case .authorizationDenied: return "Google access wasn’t granted. Sign in again and allow Float Tasks to view your task lists."
+        case .authorizationDenied: return "Google access wasn’t granted. To edit tasks, sign in again and allow the requested Tasks permission."
         case .providerRejected: return "Google couldn’t authorize this app. Review the Google consent screen and your OAuth project settings, then try again."
         case .clientRejected: return "Google rejected this OAuth client. Import a valid Desktop app client JSON from your Google Cloud project."
         case .invalidGrant, .signInExpired: return "Your saved Google authorization has expired or was revoked. Sign in again to reconnect your tasks."
@@ -565,6 +612,7 @@ enum GoogleOAuthError: LocalizedError {
         case .temporarilyUnavailable: return "Google is temporarily unavailable or limiting requests. Wait a moment and try again."
         case .invalidTokenResponse: return "Google returned an unexpected sign-in response. Try signing in again."
         case .tasksPermissionMissing: return "Google Tasks read access wasn’t granted. Sign in again and allow the requested Tasks permission."
+        case .tasksWritePermissionMissing: return "Google Tasks editing permission wasn’t granted. Your previous connection is unchanged. Enable editing again and allow the requested Tasks permission."
         case .refreshTokenMissing: return "Google didn’t provide an offline sign-in token. Sign in again and complete the consent step."
         }
     }

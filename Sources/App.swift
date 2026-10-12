@@ -261,6 +261,14 @@ struct SettingsView: View {
                         Spacer()
                         Button("Disconnect") { store.disconnect() }
                     }
+                    if !oauth.hasWriteAccess {
+                        Text("Enable editing once to add, edit, complete, and delete tasks here. Your saved list selection is kept.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button(oauth.isAuthorizing ? "Waiting for Google…" : "Enable editing") { store.enableEditing() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(oauth.isAuthorizing || store.isMutating)
+                        if oauth.isAuthorizing { Button("Cancel") { oauth.cancelSignIn() } }
+                    }
                 } else {
                     HStack {
                         Button(oauth.isAuthorizing ? "Waiting for Google…" : "Sign in with Google") { store.connect() }
@@ -275,7 +283,7 @@ struct SettingsView: View {
                 if let error = store.error {
                     Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Read-only access. Sign-in tokens are stored in your Mac’s Keychain.")
+                Text("Task changes sync directly with Google. Sign-in tokens are stored in your Mac’s Keychain.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Divider()
@@ -296,7 +304,7 @@ struct SettingsView: View {
             Text("Click the menu-bar icon to show or hide. Escape or a click outside dismisses the panel. Pin keeps it open.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button("Open Google Tasks", action: store.openGoogleTasks)
+                Text("Native Google Tasks app").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Quit", action: delegate.quit)
             }

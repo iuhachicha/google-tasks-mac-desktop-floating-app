@@ -14,7 +14,10 @@ final class TaskStore: ObservableObject {
     @Published var connectionState = "Snapshot"
     @Published var error: String? = nil
     @Published var searchText = ""
-    let canEdit = false
+    let canEdit = true
+    let isMutating = false
+    let isAuthorizing = false
+    let needsEditingAuthorization = false
     var visibleLists: [TaskList] { lists }
     var filteredLists: [TaskList] { lists }
 
@@ -33,9 +36,12 @@ final class TaskStore: ObservableObject {
 
     func refresh() {}
     func showConnection() {}
+    func enableEditing() { fatalError("Layout tests must not authorize an account") }
     func openGoogleTasks() { fatalError("Layout tests must not open a browser") }
-    func toggleCompletion(task: GoogleTask, list: TaskList) { fatalError("Read-only fixture") }
-    func addTask(title: String, list: TaskList) { fatalError("Read-only fixture") }
+    func toggleCompletion(task: GoogleTask, list: TaskList) async -> Bool { fatalError("Layout tests must not mutate tasks") }
+    func addTask(title: String, list: TaskList) async -> Bool { fatalError("Layout tests must not mutate tasks") }
+    func updateTask(task: GoogleTask, list: TaskList, title: String, notes: String, due: Date?) async -> Bool { fatalError("Layout tests must not mutate tasks") }
+    func deleteTask(task: GoogleTask, list: TaskList) async -> Bool { fatalError("Layout tests must not mutate tasks") }
 }
 
 @MainActor

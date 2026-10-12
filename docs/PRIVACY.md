@@ -4,7 +4,11 @@ This document describes the source in this repository. A modified or separately 
 
 ## Google access
 
-Float Tasks requests only `https://www.googleapis.com/auth/tasks.readonly`. It reads list identifiers and titles, plus active task identifiers, titles, notes, due dates, status, and parent relationships. Data supports the visible task list and local search. The app contains no task mutation endpoints.
+New sign-ins request `https://www.googleapis.com/auth/tasks` so Float Tasks can view, create, edit, complete, reopen, and delete tasks. Existing `tasks.readonly` sign-ins remain usable for viewing until you choose **Enable editing** and authorize the write permission. Google grants the Tasks scope for the account as a whole; it cannot be restricted to a single list. The app checks that each mutation targets a currently visible list and, when applicable, a task belonging to that list.
+
+The app reads all returned list identifiers and titles, plus active and completed task identifiers, titles, notes, due dates, status, and parent relationships. Completed tasks marked hidden by Google are included so they can be reopened. Selected list IDs control display and write targets, not which lists are fetched or cached. The header and status counts show remaining tasks.
+
+Task content is used to display your lists, search locally, and perform the edits you request. Creating or changing a task sends the relevant content to Google; deletion sends its identifiers. A confirmed deletion of an assigned task also deletes its original task in Docs or Chat, according to [Google's deletion behavior](https://developers.google.com/workspace/tasks/reference/rest/v1/tasks/delete).
 
 Your default browser handles Google sign-in. The app does not receive your Google password. Authorization and token requests go directly to Google, and task requests go directly to `tasks.googleapis.com` over HTTPS. A temporary sign-in callback listens only on your Mac’s loopback interface.
 
@@ -14,13 +18,15 @@ The app checks for updates every 60 seconds while running; opening or manually r
 
 | Data | Location and retention |
 | --- | --- |
-| Desktop OAuth client configuration and access/refresh tokens | macOS Keychain, under service `com.iuhachicha.floattasks.google`; configured as device-only, without iCloud Keychain synchronization. |
-| Latest task snapshot and sync timestamps | `~/Library/Application Support/com.iuhachicha.floattasks/tasks.json`; replaced after a successful sync and kept for offline viewing. |
+| Desktop OAuth client configuration, access/refresh tokens, and granted scopes | macOS Keychain, under service `com.iuhachicha.floattasks.google`; configured as device-only, without iCloud Keychain synchronization. |
+| Latest snapshot of all fetched lists and active/completed tasks, plus sync timestamps | `~/Library/Application Support/com.iuhachicha.floattasks/tasks.json`; updated after successful reads or writes and kept for offline viewing. |
 | Window geometry, opacity, pinning, collapsed lists, and selected list IDs | Local macOS application preferences. |
 
 The cache directory and snapshot use owner-only file permissions. The snapshot is JSON, not a separately encrypted database. Your Mac’s security and backup settings still apply. The original client JSON you downloaded is outside the app’s storage and remains under your control.
 
-Starting a new sign-in clears the previous task view and snapshot before opening the browser. Importing a different Desktop client also clears the previous view. This prevents tasks from one account remaining visible after connecting another account whose first sync fails.
+Starting a new sign-in clears the previous task view and snapshot before opening the browser. An **Enable editing** upgrade does the same while preserving the selected list IDs. Importing a different Desktop client also clears the previous view. This prevents tasks from one account remaining visible after connecting another account whose first sync fails.
+
+Editor drafts stay in the app's memory until saved or dismissed; they are not a separate persistent offline queue. The app does not automatically retry writes. If it cannot determine whether Google accepted a change, it asks you to refresh before retrying.
 
 ## Disconnecting and deleting data
 

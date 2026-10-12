@@ -57,9 +57,34 @@ struct OAuthTests {
         let response = try JSONDecoder().decode(GoogleOAuthTokenResponse.self, from: Data(#"{"access_token":"fixture-access","expires_in":3600,"token_type":"Bearer","scope":"https://www.googleapis.com/auth/tasks.readonly"}"#.utf8))
         let tokens = try response.tokens(clientID: "test-id", previousRefreshToken: "fixture-refresh")
         expect(tokens.refreshToken == "fixture-refresh", "Refresh response must preserve refresh token")
+        expect(!tokens.hasWriteAccess && tokens.hasReadAccess, "Read-only grant must never permit editing")
         expectThrows({ _ = try response.tokens(clientID: "test-id", previousRefreshToken: nil) }, "Initial authorization without refresh token accepted")
         let missingScope = try JSONDecoder().decode(GoogleOAuthTokenResponse.self, from: Data(#"{"access_token":"fixture-access","refresh_token":"fixture-refresh","expires_in":3600,"token_type":"Bearer","scope":"email"}"#.utf8))
         expectThrows({ _ = try missingScope.tokens(clientID: "test-id", previousRefreshToken: nil) }, "Insufficient Tasks scope accepted")
+        let writeResponse = GoogleOAuthTokenResponse(access_token: "fixture-access", refresh_token: "fixture-refresh",
+            expires_in: 3600, token_type: "Bearer", scope: GoogleOAuthSecurity.tasksScope, error: nil)
+        let writeTokens = try writeResponse.tokens(clientID: "test-id", previousRefreshToken: nil, requireWriteAccess: true)
+        expect(writeTokens.hasWriteAccess && writeTokens.hasReadAccess, "Full Tasks grant must permit reading and editing")
+        let readResponse = GoogleOAuthTokenResponse(access_token: "fixture-access", refresh_token: "fixture-refresh",
+            expires_in: 3600, token_type: "Bearer", scope: GoogleOAuthSecurity.tasksReadOnlyScope, error: nil)
+        do {
+            _ = try readResponse.tokens(clientID: "test-id", previousRefreshToken: nil, requireWriteAccess: true)
+            fatalError("Read-only response silently enabled editing")
+        } catch GoogleOAuthError.tasksWritePermissionMissing {}
+        let omittedScope = GoogleOAuthTokenResponse(access_token: "fixture-access", refresh_token: "fixture-refresh",
+            expires_in: 3600, token_type: "Bearer", scope: nil, error: nil)
+        expectThrows({ _ = try omittedScope.tokens(clientID: "test-id", previousRefreshToken: nil, requireWriteAccess: true) },
+                     "An unconfirmed new scope was treated as a write grant")
+        let renewedWrite = try omittedScope.tokens(clientID: "test-id", previousRefreshToken: "fixture-refresh",
+                                                   previousGrantedScopes: writeTokens.grantedScopes)
+        expect(renewedWrite.hasWriteAccess, "Omitted refresh scope must retain the recorded full grant")
+        let renewedRead = try omittedScope.tokens(clientID: "test-id", previousRefreshToken: "fixture-refresh",
+                                                  previousGrantedScopes: tokens.grantedScopes)
+        expect(!renewedRead.hasWriteAccess, "Omitted refresh scope must never upgrade a read-only grant")
+        let lookalikeScope = GoogleOAuthTokenResponse(access_token: "fixture-access", refresh_token: "fixture-refresh",
+            expires_in: 3600, token_type: "Bearer", scope: GoogleOAuthSecurity.tasksScope + ".other", error: nil)
+        expectThrows({ _ = try lookalikeScope.tokens(clientID: "test-id", previousRefreshToken: nil, requireWriteAccess: true) },
+                     "Scope comparison accepted a prefix match instead of an exact grant")
 
         // Ephemeral, cookie-free session; requests are confined to this test's
         // IPv4 loopback listener and never reach Google or another remote host.

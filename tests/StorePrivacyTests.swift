@@ -1,9 +1,11 @@
 import Foundation
 import Darwin
+import Combine
 
 // These doubles make account changes deterministic. They do not authenticate,
 // inspect credentials, open a browser, or use a network transport.
-@MainActor final class GoogleOAuth {
+@MainActor final class GoogleOAuth: ObservableObject {
+    @Published var hasWriteAccess = false
     private var signedIn = false
     var signInStatusReads = 0
     var isSignedIn: Bool {
@@ -15,15 +17,18 @@ import Darwin
     var configuredClientID: String? = "synthetic-client-a"
     var signInCalls = 0
     var importsChangeClient = true
+    var signInFails = false
     func signIn() async throws {
         signInCalls += 1
         isAuthorizing = true
         await Task.yield()
+        if signInFails { isAuthorizing = false; throw StoreTestError.fetchFailed }
         account = "account-b"
         isSignedIn = true
+        hasWriteAccess = true
         isAuthorizing = false
     }
-    func signOut() throws { isSignedIn = false }
+    func signOut() throws { isSignedIn = false; hasWriteAccess = false }
     func importClient(from url: URL) throws {
         if importsChangeClient { isSignedIn = false; configuredClientID = "synthetic-client-b" }
     }
@@ -31,9 +36,15 @@ import Darwin
 
 @MainActor final class GoogleTasksClient {
     static var fetch: (String) async throws -> [TaskList] = { _ in throw StoreTestError.fetchFailed }
+    static var write: (String, String, String?) async throws -> GoogleTask = { _, _, _ in throw StoreTestError.fetchFailed }
+    static var remove: (String, String) async throws -> Void = { _, _ in throw StoreTestError.fetchFailed }
     private let oauth: GoogleOAuth
     init(oauth: GoogleOAuth) { self.oauth = oauth }
     func fetchLists() async throws -> [TaskList] { try await Self.fetch(oauth.account) }
+    func createTask(listID: String, title: String) async throws -> GoogleTask { try await Self.write("create", listID, nil) }
+    func updateTask(listID: String, taskID: String, title: String, notes: String?, due: Date?) async throws -> GoogleTask { try await Self.write("update", listID, taskID) }
+    func setCompleted(listID: String, taskID: String, completed: Bool) async throws -> GoogleTask { try await Self.write(completed ? "complete" : "reopen", listID, taskID) }
+    func deleteTask(listID: String, taskID: String) async throws { try await Self.remove(listID, taskID) }
 }
 
 enum StoreTestError: Error { case fetchFailed }
@@ -170,6 +181,226 @@ struct StorePrivacyTests {
         expect(afterClientChange.selectedListIDs == nil, "Previous account selection returned after client change and relaunch")
         print("PASS: same-client import preserves selection, while a different client resets it in memory and preferences")
     }
+
+    static func mutationTests() async throws {
+        let list = accountALists[0]
+        let created = GoogleTask(id: "synthetic-created", title: "Synthetic new task", notes: nil,
+                                 due: nil, status: "needsAction", parent: nil)
+        do {
+            let store = try await loadedStore()
+            var writes = 0
+            GoogleTasksClient.write = { _, _, _ in writes += 1; return created }
+            let readonlyResult = await store.addTask(title: created.title, list: list)
+            expect(!readonlyResult && writes == 0, "A readonly connection attempted a write")
+            store.oauth.hasWriteAccess = true
+            store.hideAllLists()
+            let hiddenResult = await store.addTask(title: created.title, list: list)
+            expect(!hiddenResult && writes == 0, "A hidden list was writable")
+            store.applySelectedListIDs([list.id])
+            let staleResult = await store.updateTask(task: created, list: list, title: "Synthetic edit", notes: "", due: nil)
+            expect(!staleResult && writes == 0, "A stale task outside the list was writable")
+            expect(store.lists == accountALists, "Rejected writes changed the task view")
+            print("PASS: readonly, hidden-list, and stale-task writes are rejected before transport")
+        }
+        do {
+            let store = try await loadedStore()
+            store.oauth.hasWriteAccess = true
+            var response: CheckedContinuation<GoogleTask, Never>?
+            var writes = 0
+            GoogleTasksClient.write = { action, listID, _ in
+                expect(action == "create" && listID == list.id, "Create targeted the wrong endpoint or list")
+                writes += 1
+                return await withCheckedContinuation { response = $0 }
+            }
+            GoogleTasksClient.fetch = { _ in throw StoreTestError.fetchFailed }
+            let first = Task { await store.addTask(title: created.title, list: list) }
+            try await waitUntil("Create did not start") { response != nil }
+            expect(store.isMutating && store.lists == accountALists, "An unconfirmed write changed the task view")
+            let duplicate = await store.addTask(title: created.title, list: list)
+            expect(!duplicate && writes == 1, "A double submission created a duplicate request")
+            response?.resume(returning: created)
+            let firstResult = await first.value
+            expect(firstResult, "A successful write was reported as failed")
+            try await waitUntil("Post-write refresh did not settle") { !store.isLoading }
+            expect(!store.isMutating && store.lists[0].tasks.contains(created), "Confirmed create was lost after refresh failed")
+            let cache = try JSONDecoder().decode(TaskSnapshot.self, from: Data(contentsOf: AppPaths.snapshot))
+            expect(cache.lists[0].tasks.contains(created), "Confirmed create was not saved in the offline cache")
+            expect(writes == 1, "Write was retried after refresh failed")
+            print("PASS: writes wait for confirmation, serialize submissions, cache success, and never retry after a failed follow-up read")
+        }
+        do {
+            let store = try await loadedStore()
+            store.oauth.hasWriteAccess = true
+            var writes = 0
+            GoogleTasksClient.write = { action, listID, _ in
+                expect(action == "create" && listID == list.id, "Cache-failure fixture targeted the wrong task list")
+                writes += 1
+                return created
+            }
+            GoogleTasksClient.fetch = { _ in throw StoreTestError.fetchFailed }
+            // An existing directory cannot be replaced by an atomic JSON file
+            // write. This fails deterministically even under a privileged test
+            // runner, and touches only the explicitly isolated fixture path.
+            let previousCache = try Data(contentsOf: AppPaths.snapshot)
+            try FileManager.default.removeItem(at: AppPaths.snapshot)
+            try FileManager.default.createDirectory(at: AppPaths.snapshot, withIntermediateDirectories: false)
+            defer {
+                try? FileManager.default.removeItem(at: AppPaths.snapshot)
+                try? previousCache.write(to: AppPaths.snapshot, options: .atomic)
+            }
+            let succeeded = await store.addTask(title: created.title, list: list)
+            expect(succeeded, "A confirmed Google insertion was reported as failed because its offline cache could not be saved")
+            expect(!store.isMutating && store.lists[0].tasks.filter { $0.id == created.id }.count == 1,
+                   "Cache failure lost the confirmed task or left submission controls busy")
+            expect(writes == 1, "Cache failure retried a confirmed Google insertion")
+            expect(store.error?.contains("Saved to Google") == true && store.error?.contains("offline copy") == true,
+                   "Cache failure did not distinguish confirmed remote success from local persistence failure")
+            print("PASS: confirmed insertion returns success despite local cache failure, retains the task, and never resubmits it")
+        }
+        do {
+            let store = try await loadedStore()
+            store.oauth.hasWriteAccess = true
+            GoogleTasksClient.write = { _, _, _ in throw StoreTestError.fetchFailed }
+            let failed = await store.updateTask(task: list.tasks[0], list: list, title: "Synthetic failed edit", notes: "", due: nil)
+            expect(!failed && store.lists == accountALists && !store.isMutating, "A failed write changed state or stayed busy")
+            expect(store.error?.contains("Refresh before trying again") == true, "An uncertain result did not advise reconciliation")
+            print("PASS: failed writes preserve tasks and report an uncertain outcome without retrying")
+        }
+        do {
+            let store = try await loadedStore()
+            store.oauth.hasWriteAccess = true
+            var serverLists = accountALists
+            var operations: [String] = []
+            GoogleTasksClient.fetch = { _ in serverLists }
+            GoogleTasksClient.write = { action, listID, taskID in
+                expect(listID == list.id && taskID == list.tasks[0].id, "Mutation targeted a different task")
+                operations.append(action)
+                let saved = GoogleTask(id: taskID!, title: "Synthetic edited task", notes: "Synthetic edited notes",
+                                       due: "2026-10-15T00:00:00Z", status: action == "complete" ? "completed" : "needsAction", parent: nil)
+                serverLists[0].tasks = [saved]
+                return saved
+            }
+            let edited = await store.updateTask(task: list.tasks[0], list: list, title: "Synthetic edited task", notes: "Synthetic edited notes", due: Date())
+            expect(edited, "Confirmed edit failed")
+            try await waitUntil("Edit refresh did not settle") { !store.isLoading }
+            let completed = await store.toggleCompletion(task: store.lists[0].tasks[0], list: list)
+            expect(completed && store.lists[0].tasks[0].isCompleted, "Confirmed completion failed")
+            expect(store.status == "1 list · 0 tasks", "Completed tasks were counted as remaining")
+            try await waitUntil("Completion refresh did not settle") { !store.isLoading }
+            let reopened = await store.toggleCompletion(task: store.lists[0].tasks[0], list: list)
+            expect(reopened && !store.lists[0].tasks[0].isCompleted, "Confirmed reopening failed")
+            try await waitUntil("Reopen refresh did not settle") { !store.isLoading }
+            GoogleTasksClient.remove = { listID, taskID in
+                expect(listID == list.id && taskID == list.tasks[0].id, "Delete targeted a different task")
+                operations.append("delete")
+                serverLists[0].tasks = []
+            }
+            let deleted = await store.deleteTask(task: store.lists[0].tasks[0], list: list)
+            expect(deleted && store.lists[0].tasks.isEmpty, "Confirmed deletion remained visible")
+            try await waitUntil("Delete refresh did not settle") { !store.isLoading }
+            expect(operations == ["update", "complete", "reopen", "delete"], "Unexpected or repeated task mutation")
+            print("PASS: edit, complete, reopen, and delete reconcile confirmed results and remaining counts")
+        }
+        do {
+            let store = try await loadedStore()
+            store.oauth.hasWriteAccess = true
+            let parent = list.tasks[0]
+            let child = GoogleTask(id: "synthetic-child", title: "Synthetic dependent task", notes: nil,
+                                   due: nil, status: "needsAction", parent: parent.id)
+            let completedChild = GoogleTask(id: "synthetic-completed-child", title: "Synthetic completed dependent", notes: nil,
+                                            due: nil, status: "completed", parent: parent.id)
+            let unrelated = GoogleTask(id: "synthetic-unrelated", title: "Synthetic unrelated task", notes: nil,
+                                       due: nil, status: "needsAction", parent: nil)
+            let unrelatedChild = GoogleTask(id: "synthetic-unrelated-child", title: "Synthetic unrelated dependent", notes: nil,
+                                            due: nil, status: "needsAction", parent: unrelated.id)
+            let seeded = TaskList(id: list.id, title: list.title,
+                                  tasks: [parent, child, completedChild, unrelated, unrelatedChild])
+            try await refresh(store, lists: [seeded])
+            var deletes = 0
+            GoogleTasksClient.remove = { listID, taskID in
+                expect(listID == list.id && taskID == parent.id, "Parent deletion targeted another record")
+                deletes += 1
+            }
+            GoogleTasksClient.fetch = { _ in throw StoreTestError.fetchFailed }
+            let deleted = await store.deleteTask(task: parent, list: seeded)
+            expect(deleted, "Confirmed parent deletion was reported as failed")
+            try await waitUntil("Failed parent-deletion reconciliation did not settle") { !store.isLoading }
+            let remaining = [unrelated, unrelatedChild]
+            expect(store.lists[0].tasks == remaining, "Confirmed deletion left dependent rows visible or removed unrelated rows")
+            expect(store.status == "1 list · 2 tasks", "Dependent rows remained in the visible task count")
+            let cached = try JSONDecoder().decode(TaskSnapshot.self, from: Data(contentsOf: AppPaths.snapshot))
+            expect(cached.lists[0].tasks == remaining, "Dependent rows remained in the offline cache after reconciliation failed")
+            expect(deletes == 1 && store.connectionState == "Offline", "A failed reconciliation retried deletion or claimed live data")
+            let staleChildWrite = await store.updateTask(task: child, list: seeded, title: child.title, notes: "", due: nil)
+            expect(!staleChildWrite, "A dependent row hidden after parent deletion remained writable")
+
+            // The subsequent successful read remains authoritative. The test
+            // intentionally makes no claim about Google's cascade semantics.
+            let survivingChild = GoogleTask(id: child.id, title: child.title, notes: nil,
+                                            due: nil, status: "needsAction", parent: nil)
+            let reconciled = TaskList(id: list.id, title: list.title, tasks: remaining + [survivingChild])
+            try await refresh(store, lists: [reconciled])
+            expect(store.lists == [reconciled], "A later authoritative read could not restore a surviving dependent task")
+            print("PASS: parent deletion hides dependent rows through read failure, preserves unrelated tasks, and yields to later authoritative data")
+        }
+        do {
+            let store = try await loadedStore()
+            store.oauth.hasWriteAccess = true
+            var oldRead: CheckedContinuation<[TaskList], Never>?
+            var readCount = 0
+            var serverLists = accountALists
+            GoogleTasksClient.fetch = { _ in
+                readCount += 1
+                if readCount == 1 { return await withCheckedContinuation { oldRead = $0 } }
+                return serverLists
+            }
+            store.refresh()
+            try await waitUntil("Old read did not start") { oldRead != nil }
+            GoogleTasksClient.write = { _, _, _ in serverLists[0].tasks.insert(created, at: 0); return created }
+            let added = await store.addTask(title: created.title, list: list)
+            expect(added, "Create during refresh failed")
+            try await waitUntil("New read did not settle") { !store.isLoading }
+            oldRead?.resume(returning: accountALists)
+            await Task.yield()
+            expect(store.lists[0].tasks.contains(created), "A stale in-flight read overwrote a successful write")
+            print("PASS: a read started before a write cannot restore stale tasks afterwards")
+        }
+        do {
+            let store = try await loadedStore()
+            store.oauth.hasWriteAccess = true
+            var response: CheckedContinuation<GoogleTask, Never>?
+            GoogleTasksClient.write = { _, _, _ in await withCheckedContinuation { response = $0 } }
+            let pending = Task { await store.addTask(title: created.title, list: list) }
+            try await waitUntil("Disconnect write did not start") { response != nil }
+            store.disconnect()
+            expect(!store.isMutating, "Disconnect left mutation controls busy")
+            response?.resume(returning: created)
+            let disconnectedResult = await pending.value
+            expect(!disconnectedResult, "A stale write succeeded after disconnect")
+            expectCleared(store)
+            print("PASS: a late write response cannot repopulate a disconnected account")
+        }
+        do {
+            let store = try await loadedStore()
+            GoogleTasksClient.fetch = { _ in [TaskList(id: "synthetic-other-account-list", title: "Synthetic other account", tasks: [])] }
+            store.enableEditing()
+            expect(store.lists.isEmpty && !FileManager.default.fileExists(atPath: AppPaths.snapshot.path), "Permission upgrade retained previous account data during sign-in")
+            expect(store.selectedListIDs == [list.id], "Permission upgrade discarded the selected list")
+            try await waitUntil("Permission upgrade did not finish") { store.canEdit && !store.isLoading && store.connectionState == "Live" }
+            expect(store.visibleLists.isEmpty && store.selectedListIDs == [list.id], "A different account expanded the preserved selection")
+            print("PASS: editing upgrade preserves the whitelist while clearing previous-account data before sign-in")
+        }
+        do {
+            let store = try await loadedStore()
+            store.oauth.signInFails = true
+            GoogleTasksClient.fetch = { _ in accountALists }
+            store.enableEditing()
+            try await waitUntil("Failed upgrade did not restore the readable account") { store.lists == accountALists && !store.isLoading }
+            expect(!store.canEdit && store.oauth.isSignedIn, "Denied upgrade changed existing readonly credentials")
+            expect(store.error != nil && store.selectedListIDs == [list.id], "Upgrade failure lost its explanation or selection")
+            print("PASS: a failed editing upgrade restores the existing readonly view and retains the failure message")
+        }
+    }
     static func main() async throws {
         guard let isolatedDirectory = ProcessInfo.processInfo.environment["FLOATTASKS_DATA_DIR"],
               !isolatedDirectory.isEmpty,
@@ -263,6 +494,7 @@ struct StorePrivacyTests {
         }
 
         try await visibilityTests()
+        try await mutationTests()
 
         if geteuid() != 0 {
             let store = try await loadedStore()

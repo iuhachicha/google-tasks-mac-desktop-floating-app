@@ -10,7 +10,7 @@ Google’s console and requirements can change. The links below point to the off
 2. In **APIs & Services → Library**, enable **Google Tasks API**.
 3. Open **Google Auth Platform** and complete the app’s branding, support contact, and audience details. Use your own accurate information.
 4. For an external app in **Testing**, add the Google account you will use under **Audience → Test users**.
-5. Under **Data Access**, configure the read-only Google Tasks scope: `https://www.googleapis.com/auth/tasks.readonly`.
+5. Under **Data Access**, configure the Google Tasks scope: `https://www.googleapis.com/auth/tasks`. This permits viewing, creating, editing, and deleting tasks. Keep `tasks.readonly` configured if you also support existing read-only users.
 
 See Google’s [Tasks API authorization guide](https://developers.google.com/workspace/tasks/auth) and [OAuth branding requirements](https://support.google.com/cloud/answer/15549049).
 
@@ -24,12 +24,20 @@ Do not choose Web application or Service account. Float Tasks uses your system b
 
 1. Run Float Tasks and open **Settings…** from the menu-bar icon’s right-click menu.
 2. Choose **Import Google client JSON…** and select the downloaded file.
-3. Choose **Sign in with Google**. Confirm the selected account and the request to view Google Tasks.
+3. Choose **Sign in with Google**. Confirm the selected account and the Google Tasks permission request.
 4. Return to Float Tasks after the browser completes the sign-in. Open the panel to see your lists.
 
-The app stores the imported client configuration and tokens in macOS Keychain. You do not need to repeat the import every time the app starts. The downloaded JSON remains wherever you saved it; importing does not delete that original file.
+The app stores the imported client configuration, tokens, and granted scopes in macOS Keychain. You do not need to repeat the import every time the app starts. The downloaded JSON remains wherever you saved it; importing does not delete that original file.
 
 Never commit your JSON, tokens, task cache, or authorization callback URLs. The app’s generic OAuth code is public; your configured account and credentials are not part of the repository.
+
+## Upgrade an existing read-only sign-in
+
+Existing `tasks.readonly` tokens continue to support viewing. Choose **Enable editing** in the panel or Settings to request the `tasks` scope through Google's consent flow. The app enables mutations only after Google returns the write grant; it does not assume that a saved read token permits editing.
+
+Google's permission applies to all tasks in the authorized account, not a single selected list. Float Tasks separately restricts each mutation to a list currently visible in its local selection. That application check does not narrow the OAuth grant itself. See the official [Tasks scopes](https://developers.google.com/workspace/tasks/auth).
+
+The upgrade keeps your selected list IDs but clears the old task view and snapshot before opening the browser, because the browser can select a different account. After a successful sign-in, it fetches tasks again. If the selected IDs do not exist in the chosen account, the app does not substitute other lists. The restored write grant normally survives future launches; Google can still expire or revoke it.
 
 ## Testing, Production, and sign-in lifetime
 
@@ -51,6 +59,8 @@ Google documents a [verification exception for personal-use apps with fewer than
 | Google Tasks API is disabled | Enable it in the same project that owns the imported client. |
 | Sign-in callback times out | Keep the app running and check whether local security software blocks the temporary loopback connection. |
 | Cached tasks remain while offline | Restore your network connection and refresh; the indicator reports the saved view. |
+| Tasks are visible but editing is unavailable | Choose Enable editing and grant the `tasks` permission; an old read-only token cannot write. |
+| A write may have succeeded despite a connection error | Refresh and inspect the task before retrying. The app does not automatically repeat writes. |
 | Keychain access fails | Unlock your login keychain and follow the app’s error message. |
 
 Use **Disconnect** to stop syncing and delete the app’s saved tokens and local task snapshot. Disconnect does not delete Google Tasks or revoke permission at Google; you can separately remove the authorization from your Google Account. See [Privacy](PRIVACY.md).
