@@ -11,6 +11,7 @@ The panel starts at 280 points wide and can shrink to 240. Each list has its own
 - Vertically stacked lists with active tasks and a collapsible Completed section.
 - Quick-add, title and notes editing, date-only due dates, complete/reopen, and confirmed deletion inside the app.
 - A transparent window with rounded material cards and adjustable opacity.
+- Native typography and larger action targets, with reduced-motion, reduced-transparency, and increased-contrast support.
 - Menu-bar click to show or hide; Escape, the close button, or an outside click to dismiss.
 - Pinning to keep the panel open, a draggable header, and remembered window settings.
 - Local search across visible list names, task titles, and notes.
@@ -64,7 +65,7 @@ Configuration, tokens, and granted scopes are saved in Keychain and restored whe
 | Close Settings | Done, Escape, the window close button, or Command-W |
 | Quit | Right-click the menu-bar icon and choose Quit |
 
-The connection indicator distinguishes a live connection from an offline or saved view. The app must remain running to refresh; it does not install a background service.
+The connection indicator distinguishes a live connection from an offline or saved view. The app must remain running to refresh; it does not install a background service. Settings offers Narrow, Standard, and Wide presets and an opacity percentage. macOS Reduce Transparency or Increase Contrast overrides panel opacity while enabled, without discarding your saved preference.
 
 Edits are sent directly to Google, with one write at a time. Failed saves keep your draft. There is no offline write queue or automatic write retry: if a connection failure leaves the result uncertain, refresh before trying again to avoid a duplicate change. Deleting an assigned task also removes its original task in Google Docs or Chat, as stated in the confirmation.
 
@@ -76,7 +77,7 @@ Google's Tasks API does not expose the website's list-visibility checkboxes. The
 ./tests/run.sh
 ```
 
-See [Architecture](docs/ARCHITECTURE.md) for the source layout and data flow, [Privacy](docs/PRIVACY.md) for storage and deletion details, and [Contributing](CONTRIBUTING.md) before opening a pull request.
+See [Architecture](docs/ARCHITECTURE.md) for the source layout and data flow, [UI design](docs/UI_DESIGN.md) for the native panel's design constraints, [Privacy](docs/PRIVACY.md) for storage and deletion details, and [Contributing](CONTRIBUTING.md) before opening a pull request.
 
 ## License
 

@@ -5,6 +5,7 @@ import SwiftUI
 /// be non-opaque with a clear background so only the material cards are visible.
 struct RootView: View {
     @ObservedObject var store: TaskStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let onPin: () -> Void
     let onHide: () -> Void
     let onSettings: () -> Void
@@ -12,10 +13,11 @@ struct RootView: View {
 
     @State private var showsSearch = false
     @State private var collapsedLists: Set<String> = []
+    @FocusState private var isSearchFocused: Bool
     private static let collapsedListsPreference = "FloatTasks.collapsedListIDs"
 
     var body: some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 8) {
             header
 
             if !store.canEdit && !store.visibleLists.isEmpty {
@@ -27,7 +29,7 @@ struct RootView: View {
                     .controlSize(.small)
                     .disabled(store.isAuthorizing || store.isMutating)
                     Text("Add, edit, and complete tasks here.")
-                        .font(.system(size: 10))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
@@ -41,17 +43,21 @@ struct RootView: View {
                         .foregroundStyle(.secondary)
                     TextField("Find a task…", text: $store.searchText)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 12))
+                        .font(.body)
+                        .focused($isSearchFocused)
+                        .accessibilityLabel("Search Tasks")
                         .disabled(store.isMutating)
                     if !store.searchText.isEmpty {
                         Button {
                             store.searchText = ""
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 28, height: 28)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(QuietButtonStyle())
                         .help("Clear search")
+                        .accessibilityLabel("Clear Search")
                     }
                 }
                 .padding(.horizontal, 13)
@@ -60,8 +66,11 @@ struct RootView: View {
             }
 
             if store.visibleLists.isEmpty {
-                emptyState
-                    .frame(maxHeight: .infinity)
+                ScrollView(.vertical, showsIndicators: false) {
+                    emptyState
+                        .padding(.vertical, 5)
+                }
+                .frame(maxHeight: .infinity)
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
                     // Measure every list card up front so its variable height
@@ -69,7 +78,7 @@ struct RootView: View {
                     VStack(spacing: 10) {
                         if store.filteredLists.isEmpty {
                             Text("No matching tasks")
-                                .font(.system(size: 12))
+                                .font(.body)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity)
                                 .padding(24)
@@ -81,7 +90,7 @@ struct RootView: View {
                                 list: list,
                                 isCollapsed: collapsedLists.contains(list.id),
                                 toggleCollapsed: {
-                                    withAnimation(.easeInOut(duration: 0.18)) {
+                                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.16)) {
                                         if collapsedLists.contains(list.id) {
                                             collapsedLists.remove(list.id)
                                         } else {
@@ -105,7 +114,7 @@ struct RootView: View {
                     Image(systemName: "exclamationmark.circle")
                     Text(error).fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.system(size: 10))
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
@@ -117,7 +126,7 @@ struct RootView: View {
             footer
         }
         .padding(12)
-        .frame(minWidth: 240, idealWidth: 308, maxWidth: .infinity,
+        .frame(minWidth: 240, idealWidth: 280, maxWidth: .infinity,
                minHeight: 320, idealHeight: 620, maxHeight: .infinity)
         .background(Color.clear)
         .onAppear {
@@ -127,33 +136,22 @@ struct RootView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-            Text("Tasks")
-                .font(.system(size: 14, weight: .semibold))
+            Text("Float Tasks")
+                .font(.caption.weight(.medium))
             Spacer(minLength: 8)
             if store.isLoading || store.isMutating {
                 ProgressView()
                     .controlSize(.mini)
-                    .scaleEffect(0.8)
-            } else if !store.visibleLists.isEmpty {
-                Text("\(store.visibleLists.reduce(0) { $0 + $1.tasks.filter { !$0.isCompleted }.count })")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(.primary.opacity(0.055), in: Capsule())
-                    .accessibilityLabel("Remaining tasks")
+                    .accessibilityLabel(store.isMutating ? "Saving Changes" : "Refreshing Tasks")
             }
             Image(systemName: "line.3.horizontal")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.tertiary)
+                .font(.caption.weight(.medium))
+                .accessibilityHidden(true)
         }
-        .padding(.horizontal, 15)
-        .padding(.vertical, 12)
-        .floatingCard(radius: 22)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .frame(minHeight: 30)
+        .floatingCard(radius: 15)
         .overlay(WindowDragArea())
         .help("Drag to move • Resize from an edge")
         .accessibilityElement(children: .combine)
@@ -163,14 +161,14 @@ struct RootView: View {
         VStack(spacing: 15) {
             Spacer(minLength: 6)
             Image(systemName: store.isLoading ? "arrow.triangle.2.circlepath" : "checkmark.circle")
-                .font(.system(size: 34, weight: .ultraLight))
+                .font(.system(size: 30, weight: .regular))
                 .foregroundStyle(.secondary)
             VStack(spacing: 6) {
                 Text(emptyStateTitle)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.title3.weight(.semibold))
                     .multilineTextAlignment(.center)
                 Text(emptyStateDescription)
-                    .font(.system(size: 12))
+                    .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
@@ -184,10 +182,10 @@ struct RootView: View {
                 .tint(.accentColor)
                 if let error = store.error, !error.isEmpty {
                     Text(error)
-                        .font(.system(size: 10))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
                         .help(error)
                 }
             }
@@ -220,51 +218,55 @@ struct RootView: View {
     }
 
     private var footer: some View {
-        VStack(spacing: 7) {
-          HStack(spacing: 0) {
+        HStack(spacing: 2) {
             footerButton("magnifyingglass", help: "Search tasks", isActive: showsSearch) {
-                withAnimation(.easeInOut(duration: 0.16)) {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.16)) {
                     showsSearch.toggle()
                     if !showsSearch { store.searchText = "" }
                 }
+                isSearchFocused = showsSearch
             }
+            .accessibilityValue(showsSearch ? "Shown" : "Hidden")
             footerButton("arrow.clockwise", help: "Refresh tasks") {
                 store.refresh()
             }
             .disabled(store.isLoading || store.isMutating)
-            footerDivider
             footerButton(isPinned ? "pin.fill" : "pin", help: isPinned ? "Dismiss when clicking outside" : "Keep panel open", isActive: isPinned, action: onPin)
-            footerButton("slider.horizontal.3", help: "Connection and settings", action: onSettings)
+                .accessibilityLabel("Keep Panel Open")
+                .accessibilityValue(isPinned ? "On" : "Off")
             footerDivider
+            Button(action: onSettings) {
+                HStack(spacing: 5) {
+                    Image(systemName: store.connectionState == "Live" ? "checkmark.circle.fill" : "icloud.slash")
+                        .font(.caption)
+                        .foregroundStyle(store.connectionState == "Live" ? Color.green : Color(nsColor: .secondaryLabelColor))
+                        .accessibilityHidden(true)
+                    Text(connectionLabel)
+                        .font(.caption)
+                        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 4)
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(QuietButtonStyle())
+            .help(connectionHelp)
+            .accessibilityLabel("Connection and Settings")
+            .accessibilityValue(store.connectionState)
             footerButton("xmark", help: "Close panel (reopen from the menu bar)", action: onHide)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 6)
-        .floatingCard(radius: 24)
-          .fixedSize()
-          Button(action: onSettings) {
-              HStack(spacing: 5) {
-                  Circle()
-                      .fill(store.connectionState == "Live" ? Color.green.opacity(0.8) : Color.secondary.opacity(0.45))
-                      .frame(width: 4, height: 4)
-                  Text(store.connectionState)
-                      .font(.system(size: 9, weight: .medium))
-                      .lineLimit(1)
-                      .fixedSize(horizontal: true, vertical: false)
-                  if !store.status.isEmpty {
-                      Text("· " + store.status)
-                          .font(.system(size: 9))
-                          .lineLimit(1)
-                          .truncationMode(.tail)
-                  }
-              }
-              .foregroundStyle(.secondary)
-              .padding(.horizontal, 9)
-              .padding(.vertical, 4)
-              .floatingCard(radius: 10)
-          }
-          .buttonStyle(.plain)
-          .help(connectionHelp)
+        .floatingCard(radius: 21)
+        .fixedSize()
+    }
+
+    private var connectionLabel: String {
+        switch store.connectionState {
+        case "Snapshot": return "Saved"
+        case "Not connected": return "Connect"
+        default: return store.connectionState
         }
     }
 
@@ -288,20 +290,21 @@ struct RootView: View {
 
     private var footerDivider: some View {
         Rectangle()
-            .fill(.primary.opacity(0.09))
-            .frame(width: 1, height: 19)
-            .padding(.horizontal, 3)
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1, height: 16)
+            .padding(.horizontal, 2)
     }
 
     private func footerButton(_ symbol: String, help: String, isActive: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(isActive ? Color.accentColor : Color.primary.opacity(0.78))
-                .frame(width: 32, height: 30)
-                .contentShape(Circle())
+                .foregroundStyle(isActive ? Color.accentColor : Color(nsColor: .secondaryLabelColor))
+                .frame(width: 28, height: 28)
+                .background(isActive ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
         }
-        .buttonStyle(QuietIconButtonStyle())
+        .buttonStyle(QuietButtonStyle())
         .help(help)
         .accessibilityLabel(help)
     }
@@ -309,6 +312,7 @@ struct RootView: View {
 
 private struct TaskListCard: View {
     @ObservedObject var store: TaskStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let list: TaskList
     let isCollapsed: Bool
     let toggleCollapsed: () -> Void
@@ -327,27 +331,28 @@ private struct TaskListCard: View {
             Button(action: toggleCollapsed) {
                 HStack(spacing: 8) {
                     Text(list.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Color(nsColor: .labelColor))
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                     Spacer(minLength: 6)
                     Text("\(activeTasks.count)")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                         .monospacedDigit()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                         .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                         .frame(width: 11, height: 11)
                         .fixedSize()
                         .accessibilityHidden(true)
                 }
-                .padding(.horizontal, 15)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(QuietButtonStyle(cornerRadius: 18))
             .help(isCollapsed ? "Expand \(list.title)" : "Collapse \(list.title)")
             .accessibilityLabel(list.title)
             .accessibilityValue("\(isCollapsed ? "Collapsed" : "Expanded"), \(activeTasks.count) remaining tasks")
@@ -365,34 +370,39 @@ private struct TaskListCard: View {
                     if activeTasks.isEmpty {
                         HStack(spacing: 7) {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.caption.weight(.semibold))
                             Text("All clear")
-                                .font(.system(size: 12))
+                                .font(.body)
                         }
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 9)
                     }
 
                     if !completedTasks.isEmpty {
                         Button {
-                            withAnimation(.easeInOut(duration: 0.16)) {
+                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.16)) {
                                 showsCompleted.toggle()
                             }
                         } label: {
                             HStack(spacing: 5) {
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 8, weight: .semibold))
+                                    .font(.caption.weight(.semibold))
                                     .rotationEffect(.degrees(showsCompleted ? 90 : 0))
+                                    .accessibilityHidden(true)
                                 Text("Completed · \(completedTasks.count)")
-                                    .font(.system(size: 10))
+                                    .font(.caption)
                             }
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                             .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
+                            .padding(.vertical, 4)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(QuietButtonStyle())
+                        .accessibilityLabel("Completed Tasks")
+                        .accessibilityValue("\(completedTasks.count), \(showsCompleted ? "Expanded" : "Collapsed")")
+                        .accessibilityHint(showsCompleted ? "Hide completed tasks" : "Show completed tasks to edit or reopen them")
                         if showsCompleted {
                             ForEach(completedTasks) { task in
                                 TaskRow(store: store, task: task, list: list)
@@ -412,7 +422,7 @@ private struct TaskListCard: View {
         if isAdding {
             VStack(alignment: .leading, spacing: 8) {
                 TextField("New task", text: $newTaskTitle, axis: .vertical)
-                    .font(.system(size: 12))
+                    .font(.body)
                     .lineLimit(1...4)
                     .textFieldStyle(.plain)
                     .focused($isAddFocused)
@@ -433,8 +443,8 @@ private struct TaskListCard: View {
                 }
                 .controlSize(.small)
             }
-            .padding(10)
-            .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         } else {
@@ -442,15 +452,17 @@ private struct TaskListCard: View {
                 isAdding = true
                 isAddFocused = true
             } label: {
-                Label("Add task", systemImage: "plus")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
+                Label("Add Task", systemImage: "plus")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                    .padding(.horizontal, 12)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(QuietButtonStyle())
             .disabled(isBusy)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 6)
         }
     }
 
@@ -473,7 +485,6 @@ private struct TaskRow: View {
     @ObservedObject var store: TaskStore
     let task: GoogleTask
     let list: TaskList
-    @State private var isHovered = false
     @State private var isEditing = false
     @State private var isSubmitting = false
     @State private var confirmsDelete = false
@@ -485,6 +496,11 @@ private struct TaskRow: View {
 
     private var isBusy: Bool { store.isMutating || isSubmitting }
     private var validTitle: Bool { !draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var accessibleDetails: String {
+        [task.isCompleted ? "Completed" : "Incomplete",
+         TaskDueDate.label(task.due).map { "Due \($0)" }, task.notes]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ". ")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -498,12 +514,12 @@ private struct TaskRow: View {
     }
 
     private var summary: some View {
-        HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .top, spacing: 7) {
             if store.canEdit {
                 Button(action: toggleCompletion) {
                     completionIcon
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(QuietButtonStyle())
                 .disabled(isBusy)
                 .help(task.isCompleted ? "Reopen task" : "Complete task")
                 .accessibilityLabel(task.isCompleted ? "Reopen \(task.title)" : "Complete \(task.title)")
@@ -515,48 +531,50 @@ private struct TaskRow: View {
             Button(action: beginEditing) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(task.title.isEmpty ? "Untitled task" : task.title)
-                        .font(.system(size: 12))
-                        .foregroundStyle(task.isCompleted ? .secondary : .primary)
+                        .font(.body)
+                        .foregroundStyle(Color(nsColor: task.isCompleted ? .secondaryLabelColor : .labelColor))
+                        .multilineTextAlignment(.leading)
                         .strikethrough(task.isCompleted, color: .secondary.opacity(0.45))
                         .lineLimit(5)
                         .fixedSize(horizontal: false, vertical: true)
                     if let notes = task.notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !task.isCompleted {
                         Text(notes)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                            .font(.caption)
+                            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                             .lineLimit(1)
                     }
                     if let due = TaskDueDate.label(task.due), !task.isCompleted {
                         Label(due, systemImage: "calendar")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                             .padding(.top, 1)
                     }
                 }
+                .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(QuietButtonStyle(cornerRadius: 6))
             .disabled(!store.canEdit || isBusy)
             .help(store.canEdit ? "Edit task" : "Enable editing to change this task")
-            .accessibilityLabel("Edit \(task.title)")
-            .padding(.top, 1)
+            .accessibilityLabel(task.title.isEmpty ? "Untitled Task" : task.title)
+            .accessibilityValue(accessibleDetails)
+            .accessibilityHint(store.canEdit ? "Edit the title, notes, and due date" : "Enable editing to change this task")
+            .padding(.top, 5)
         }
-        .padding(.leading, task.parent == nil ? 15 : 29)
-        .padding(.trailing, 14)
-        .padding(.vertical, 7)
-        .background(isHovered ? Color.primary.opacity(0.025) : Color.clear)
-        .onHover { isHovered = $0 }
+        .padding(.leading, task.parent == nil ? 12 : 26)
+        .padding(.trailing, 12)
+        .padding(.vertical, 6)
         .help([task.title, task.notes].compactMap { $0 }.joined(separator: "\n\n"))
     }
 
     private var editor: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Edit task")
-                .font(.system(size: 10, weight: .medium))
+            Text("Edit Task")
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
             TextField("Task title", text: $draftTitle, axis: .vertical)
-                .font(.system(size: 12, weight: .medium))
+                .font(.body.weight(.medium))
                 .lineLimit(1...5)
                 .textFieldStyle(.plain)
                 .focused($isTitleFocused)
@@ -565,21 +583,21 @@ private struct TaskRow: View {
                 .accessibilityLabel("Task title")
             VStack(alignment: .leading, spacing: 4) {
                 Text("Notes")
-                    .font(.system(size: 10))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                 TextEditor(text: $draftNotes)
-                    .font(.system(size: 11))
+                    .font(.body)
                     .scrollContentBackground(.hidden)
                     .frame(height: 66)
                     .padding(4)
-                    .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 6))
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
                     .disabled(isBusy || confirmsDelete)
                     .accessibilityLabel("Task notes")
             }
             VStack(alignment: .leading, spacing: 7) {
-                Toggle("Due date", isOn: $hasDueDate)
+                Toggle("Due Date", isOn: $hasDueDate)
                     .toggleStyle(.checkbox)
-                    .font(.system(size: 11))
+                    .font(.caption)
                 if hasDueDate {
                     DatePicker("", selection: $draftDueDate, displayedComponents: .date)
                         .labelsHidden()
@@ -606,8 +624,10 @@ private struct TaskRow: View {
                     } label: {
                         Image(systemName: "trash")
                             .foregroundStyle(.red)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(QuietButtonStyle())
                     .help("Delete task…")
                     .accessibilityLabel("Delete task")
                     .disabled(isBusy || !store.canEdit)
@@ -615,18 +635,18 @@ private struct TaskRow: View {
                 .controlSize(.small)
             }
         }
-        .padding(11)
-        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal, 10)
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 12)
         .padding(.vertical, 6)
     }
 
     private var deleteConfirmation: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Delete this task?")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.caption.weight(.semibold))
             Text("Subtasks may also be removed. Assigned tasks are removed from their original Docs or Chat.")
-                .font(.system(size: 10))
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
@@ -643,9 +663,9 @@ private struct TaskRow: View {
 
     private var completionIcon: some View {
         Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-            .font(.system(size: 16, weight: .light))
-            .foregroundStyle(task.isCompleted ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(isHovered ? 0.9 : 0.45))
-            .frame(width: 18, height: 19)
+            .font(.system(size: 17, weight: .regular))
+            .foregroundStyle(task.isCompleted ? Color.green : Color(nsColor: .controlTextColor))
+            .frame(width: 28, height: 28)
             .contentShape(Rectangle())
     }
 
@@ -724,17 +744,27 @@ private enum TaskDueDate {
 }
 
 private struct FloatingCard: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
     let radius: CGFloat
     func body(content: Content) -> some View {
         content
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .background {
+                if reduceTransparency || contrast == .increased {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                } else {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(.regularMaterial)
+                }
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(.white.opacity(0.35), lineWidth: 0.7)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: contrast == .increased ? 1.5 : 0.5)
                     .allowsHitTesting(false)
             }
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .shadow(color: .black.opacity(0.055), radius: 8, x: 0, y: 3)
+            .shadow(color: Color(nsColor: .shadowColor).opacity(0.08), radius: 8, x: 0, y: 3)
     }
 }
 
@@ -744,11 +774,32 @@ private extension View {
     }
 }
 
-private struct QuietIconButtonStyle: ButtonStyle {
+private struct QuietButtonStyle: PrimitiveButtonStyle {
+    var cornerRadius: CGFloat = 8
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(configuration.isPressed ? Color.primary.opacity(0.07) : Color.clear, in: Circle())
-            .opacity(configuration.isPressed ? 0.65 : 1)
+        HoverButton(configuration: configuration, cornerRadius: cornerRadius)
+    }
+
+    private struct HoverButton: View {
+        let configuration: PrimitiveButtonStyleConfiguration
+        let cornerRadius: CGFloat
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var isHovered = false
+
+        var body: some View {
+            // The native borderless button retains macOS press and keyboard
+            // focus behavior; the only custom feedback is its quiet hover fill.
+            Button(configuration)
+                .buttonStyle(.borderless)
+                .background {
+                    if isHovered && isEnabled {
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .fill(Color(nsColor: .unemphasizedSelectedContentBackgroundColor).opacity(0.55))
+                    }
+                }
+                .onHover { isHovered = $0 }
+        }
     }
 }
 

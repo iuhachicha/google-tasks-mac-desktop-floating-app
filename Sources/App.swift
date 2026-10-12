@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var statusItem: NSStatusItem!
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    private var accessibilityObserver: NSObjectProtocol?
     private var contextMenu: NSMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -61,8 +62,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.contentView = hosting
         _ = panel.setFrameUsingName("FloatTasksPanel")
         panel.setFrameAutosaveName("FloatTasksPanel")
-        let opacity = UserDefaults.standard.double(forKey: "panelOpacity")
-        panel.alphaValue = opacity >= 0.45 ? min(opacity, 1) : 1
+        applyPanelOpacity()
+        accessibilityObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.applyPanelOpacity() }
+        }
         applyPin()
         buildMenuBarItem()
         installDismissHandlers()
@@ -189,20 +195,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
+        if let accessibilityObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(accessibilityObserver)
+        }
         store.oauth.cancelSignIn()
     }
     @objc func showSettings() {
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 510),
-                                  styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 540),
+                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = "Float Tasks · Settings"
             window.isReleasedWhenClosed = false
             window.level = .normal
             window.delegate = self
-            window.contentView = NSHostingView(rootView: SettingsView(store: store, oauth: store.oauth, delegate: self))
             window.center()
             settingsWindow = window
         }
+        // Re-sample the panel's current width and saved opacity on each opening.
+        let hosting = NSHostingView(rootView: SettingsView(store: store, oauth: store.oauth, delegate: self))
+        hosting.sizingOptions = []
+        settingsWindow?.contentView = hosting
         hide()
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -211,7 +223,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var frame = panel.frame
         frame.origin.x += frame.width - width
         frame.size.width = width
-        panel.setFrame(frame, display: true, animate: true)
+        panel.setFrame(frame, display: true, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+    func applyPanelOpacity() {
+        let preferences = NSWorkspace.shared
+        let opacity = UserDefaults.standard.double(forKey: "panelOpacity")
+        let savedOpacity = opacity >= 0.45 ? min(opacity, 1) : 1
+        panel.alphaValue = preferences.accessibilityDisplayShouldReduceTransparency
+            || preferences.accessibilityDisplayShouldIncreaseContrast ? 1 : savedOpacity
     }
     func importClient() {
         let picker = NSOpenPanel()
@@ -234,84 +253,151 @@ struct SettingsView: View {
     @ObservedObject var store: TaskStore
     @ObservedObject var oauth: GoogleOAuth
     let delegate: AppDelegate
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var opacity = 1.0
+    @State private var panelWidth = 280
+
+    private var requiresOpaquePanel: Bool { reduceTransparency || contrast == .increased }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 17) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 28, weight: .regular))
+                    .foregroundStyle(.green)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
                     Text("Float Tasks").font(.title2.weight(.semibold))
-                    Text("Your tasks, a click from the menu bar.").font(.callout).foregroundStyle(.secondary)
+                    Text("A little space for what’s next.")
+                        .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Done", action: delegate.closeSettings)
-                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(24)
+
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    connectionSection
+                    appearanceSection
+                    Label("Click the menu-bar icon to show your tasks. Pin the panel to keep it open.", systemImage: "menubar.rectangle")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(24)
             }
             Divider()
-            VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Button("Quit Float Tasks", action: delegate.quit)
+                Spacer()
+                Button("Done", action: delegate.closeSettings)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+        }
+        .frame(width: 440, height: 540)
+        .onAppear {
+            let savedOpacity = UserDefaults.standard.double(forKey: "panelOpacity")
+            opacity = savedOpacity >= 0.45 ? min(savedOpacity, 1) : 1
+            panelWidth = Int(delegate.panel.frame.width.rounded())
+        }
+    }
+
+    private var connectionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
                 Text("Google Tasks").font(.headline)
-                Text(oauth.isSignedIn ? "Connected directly to Google. Your lists refresh automatically while the app is running." : "Sign in once to see your Google Tasks here. Chrome and browser extensions are not needed for syncing.")
-                    .font(.callout).foregroundStyle(.secondary)
-                if !oauth.isConfigured {
-                    Text("One-time setup: import a Google OAuth client JSON created for a Desktop app, with Google Tasks API enabled.")
+                Spacer()
+                if oauth.isSignedIn {
+                    Label("Connected", systemImage: "checkmark.circle.fill")
                         .font(.caption).foregroundStyle(.secondary)
-                    Button("Import Google client JSON…", action: delegate.importClient)
-                } else if oauth.isSignedIn {
+                }
+            }
+            Text(oauth.isSignedIn
+                 ? "Your tasks sync automatically. Changes save directly to Google."
+                 : "Connect your account to see and manage your tasks here.")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !oauth.isConfigured {
+                Text("Import a Google Desktop OAuth client JSON with the Tasks API enabled to get started.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Import Google Client JSON…", action: delegate.importClient)
+            } else if oauth.isSignedIn {
+                if !oauth.hasWriteAccess {
+                    Text("Enable editing to add, edit, complete, and delete tasks. Your list selection stays the same.")
+                        .font(.caption).foregroundStyle(.secondary)
                     HStack {
-                        Label("Connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                        Spacer()
-                        Button("Disconnect") { store.disconnect() }
-                    }
-                    if !oauth.hasWriteAccess {
-                        Text("Enable editing once to add, edit, complete, and delete tasks here. Your saved list selection is kept.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Button(oauth.isAuthorizing ? "Waiting for Google…" : "Enable editing") { store.enableEditing() }
+                        Button(oauth.isAuthorizing ? "Waiting for Google…" : "Enable Editing") { store.enableEditing() }
                             .buttonStyle(.borderedProminent)
                             .disabled(oauth.isAuthorizing || store.isMutating)
                         if oauth.isAuthorizing { Button("Cancel") { oauth.cancelSignIn() } }
                     }
-                } else {
-                    HStack {
-                        Button(oauth.isAuthorizing ? "Waiting for Google…" : "Sign in with Google") { store.connect() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(oauth.isAuthorizing)
-                        if oauth.isAuthorizing {
-                            Button("Cancel") { oauth.cancelSignIn() }
-                        }
-                    }
-                    Button("Use another Google client…", action: delegate.importClient).font(.caption)
                 }
-                if let error = store.error {
-                    Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                Button("Disconnect") { store.disconnect() }
+            } else {
+                HStack {
+                    Button(oauth.isAuthorizing ? "Waiting for Google…" : "Sign In with Google") { store.connect() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(oauth.isAuthorizing)
+                    if oauth.isAuthorizing { Button("Cancel") { oauth.cancelSignIn() } }
                 }
-                Text("Task changes sync directly with Google. Sign-in tokens are stored in your Mac’s Keychain.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Button("Use Another Google Client…", action: delegate.importClient)
             }
-            Divider()
-            HStack {
-                Text("Width").font(.headline)
-                Spacer()
-                ForEach([240, 280, 340], id: \.self) { width in
-                    Button(String(width)) { delegate.resize(width: CGFloat(width)) }
+            if let error = store.error {
+                Label {
+                    Text(error).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.circle")
                 }
+                .font(.caption).foregroundStyle(.red)
             }
-            HStack {
-                Text("Opacity").font(.headline)
-                Slider(value: $opacity, in: 0.45...1).onChange(of: opacity) { value in
-                    delegate.panel.alphaValue = value
-                    UserDefaults.standard.set(value, forKey: "panelOpacity")
-                }
-            }
-            Text("Click the menu-bar icon to show or hide. Escape or a click outside dismisses the panel. Pin keeps it open.")
+            Label("Sign-in is saved securely in your Mac’s Keychain.", systemImage: "lock")
                 .font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Text("Native Google Tasks app").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Quit", action: delegate.quit)
+        }
+    }
+
+    private var appearanceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Panel").font(.headline)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Width").font(.callout)
+                    Spacer()
+                    Text("\(panelWidth) pt").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
+                Picker("Panel width", selection: $panelWidth) {
+                    Text("Narrow").tag(240)
+                    Text("Standard").tag(280)
+                    Text("Wide").tag(340)
+                    if ![240, 280, 340].contains(panelWidth) { Text("Custom").tag(panelWidth) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .onChange(of: panelWidth) { delegate.resize(width: CGFloat($0)) }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Opacity").font(.callout)
+                    Spacer()
+                    Text(requiresOpaquePanel ? "100%" : "\(Int((opacity * 100).rounded()))%")
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
+                Slider(value: $opacity, in: 0.45...1)
+                    .accessibilityLabel("Panel opacity")
+                    .accessibilityValue(requiresOpaquePanel ? "100 percent" : "\(Int((opacity * 100).rounded())) percent")
+                    .disabled(requiresOpaquePanel)
+                    .onChange(of: opacity) { value in
+                        UserDefaults.standard.set(value, forKey: "panelOpacity")
+                        delegate.applyPanelOpacity()
+                    }
+                if requiresOpaquePanel {
+                    Text("Your Mac’s accessibility settings keep the panel opaque.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
-        .padding(24)
-        .frame(width: 440)
-        .onAppear { opacity = delegate.panel.alphaValue }
     }
 }
 
