@@ -1,0 +1,28 @@
+# Generated apps, compiler output, and editor state
+.build/
+dist/
+*.app/
+*.dSYM/
+.DS_Store
+.swiftpm/
+.idea/
+.vscode/
+
+# Local Google configuration, credentials, and cached task data
+.env
+.env.*
+client_secret*.json
+*oauth*.json
+*OAuth*.json
+credentials/
+secrets/
+tasks.json
+*.key
+*.pem
+*.p12
+*.pfx
+*.mobileprovision
+
+# Never commit local captures; use deliberately synthetic documentation assets
+screenshots/
+*.log
