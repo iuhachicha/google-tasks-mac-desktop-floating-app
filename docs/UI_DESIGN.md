@@ -5,6 +5,7 @@ Float Tasks keeps a small, readable task list beside the user's work. Its defini
 ## Hierarchy and layout
 
 - Keep the same vertical layout from 240 to 460 points. The default width is 280 points.
+- Keep the controls immediately below short lists. Long lists use the remaining panel height for scrolling, with the controls outside the scroll area.
 - Let the list title lead, followed by Add Task and the active tasks. Keep completed items behind disclosure.
 - Show remaining counts with the list instead of repeating them throughout the panel.
 - Keep common icon targets at least 28 points and give controls visible interaction feedback.
@@ -36,6 +37,8 @@ Material contrast depends on the desktop underneath and the system appearance. A
 ## Implementation constraints
 
 The outer list container must remain an eager `VStack`, and AppKit must own the panel size (`NSHostingView.sizingOptions = []`). A lazy outer container previously caused a layout loop at the bottom of long lists. Run `./tests/run-scroll.sh` after structural changes.
+
+The scroll viewport is capped by the content's measured local height. Measure only that height, round it upward, and update the cap only when it changes. Never feed scroll offsets into sizing or resize the window from content measurements. The root stays top-aligned so short content and its controls remain together.
 
 Keep editors and delete confirmation inline. A failed request must preserve its draft. Visual changes must not change the selected-list filter, authentication, or API behavior.
 

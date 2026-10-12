@@ -13,6 +13,7 @@ struct RootView: View {
 
     @State private var showsSearch = false
     @State private var collapsedLists: Set<String> = []
+    @State private var scrollContentHeight: CGFloat?
     @FocusState private var isSearchFocused: Bool
     private static let collapsedListsPreference = "FloatTasks.collapsedListIDs"
 
@@ -69,8 +70,9 @@ struct RootView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     emptyState
                         .padding(.vertical, 5)
+                        .measureScrollContentHeight()
                 }
-                .frame(maxHeight: .infinity)
+                .frame(minHeight: 0, maxHeight: scrollContentHeight, alignment: .top)
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
                     // Measure every list card up front so its variable height
@@ -105,7 +107,9 @@ struct RootView: View {
                     // Room for the soft edges of the cards inside the scroll view.
                     .padding(.horizontal, 4)
                     .padding(.vertical, 5)
+                    .measureScrollContentHeight()
                 }
+                .frame(minHeight: 0, maxHeight: scrollContentHeight, alignment: .top)
                 .padding(.horizontal, -4)
             }
 
@@ -127,8 +131,17 @@ struct RootView: View {
         }
         .padding(12)
         .frame(minWidth: 240, idealWidth: 280, maxWidth: .infinity,
-               minHeight: 320, idealHeight: 620, maxHeight: .infinity)
+               minHeight: 320, idealHeight: 620, maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
+        .onPreferenceChange(ScrollContentHeightKey.self) { height in
+            // Only the content's height matters. Scroll offsets never feed back
+            // into layout, and AppKit continues to own the window's size.
+            guard height.isFinite, height > 0 else { return }
+            let roundedHeight = height.rounded(.up)
+            if scrollContentHeight != roundedHeight {
+                scrollContentHeight = roundedHeight
+            }
+        }
         .onAppear {
             collapsedLists = Set(UserDefaults.standard.stringArray(forKey: Self.collapsedListsPreference) ?? [])
         }
@@ -768,7 +781,22 @@ private struct FloatingCard: ViewModifier {
     }
 }
 
+private struct ScrollContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private extension View {
+    func measureScrollContentHeight() -> some View {
+        background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: ScrollContentHeightKey.self, value: geometry.size.height)
+            }
+        }
+    }
+
     func floatingCard(radius: CGFloat) -> some View {
         modifier(FloatingCard(radius: radius))
     }
