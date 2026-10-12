@@ -54,6 +54,10 @@ Tokens and granted scopes are kept in memory and Keychain. Legacy read-only toke
 
 ## Building and checking changes
 
-Run `./build.sh` from the repository root to create `dist/Float Tasks.app`, then `./tests/run.sh` for the repository checks. The build targets the current Mac’s architecture with a macOS 13 deployment target and applies an ad-hoc signature.
+Run `./build.sh` from the repository root to create `dist/Float Tasks.app`, then `./tests/run.sh` for the repository checks. The build targets the current Mac’s architecture with a macOS 13 deployment target. It uses a configured certificate identity, or warns and signs ad-hoc when no identity is configured. See [Local signing](SIGNING.md).
+
+`CODE_SIGN_IDENTITY` takes precedence over the ignored `.codesign-identity` file; both accept only a full certificate SHA-1 fingerprint. The file is read as data, never sourced. Certificate configuration is checked before compiling, and the staged bundle must pass signing and strict signature verification before replacing the previous build. Missing identities and signing failures never fall back to ad-hoc signing. An unconfigured build refuses to overwrite an existing certificate-signed bundle. `codesign` generates the normal designated requirement from the signing identity and bundle identifier; the script does not weaken it with a custom requirement.
+
+Keychain also checks a partition identifier. Recognized Apple-issued developer identities use a team-based partition; self-signed code can fall back to a build-specific code hash even when its designated requirement is unchanged. The builder accepts self-signed identities for generic local builds, but they are not a reliable fix for repeated Keychain prompts. See the explanation and Apple source linked in [Local signing](SIGNING.md).
 
 UI changes should also be checked manually at 240-point width, in light and dark appearance, and with empty, live, and offline states. Use synthetic task fixtures for tests and screenshots. Do not check in real snapshots, client configuration, tokens, or build products.

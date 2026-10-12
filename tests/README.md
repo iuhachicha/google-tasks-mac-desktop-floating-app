@@ -15,6 +15,22 @@ The suite uses synthetic fixtures. It never opens a real browser, accesses the r
 
 These tests verify app logic and the local callback server. They do not prove that a particular Google Cloud project is configured correctly, that a real account grants consent, or that macOS permits a particular signed app to access its Keychain items.
 
+## Optional manual signing continuity test
+
+After selecting an existing signing certificate, run this separately from `run.sh` and CI:
+
+```sh
+./tests/run-signing.sh YOUR_40_CHARACTER_CERTIFICATE_SHA1
+```
+
+The fingerprint must be supplied explicitly; this test does not read `.codesign-identity` or `CODE_SIGN_IDENTITY`. It requires macOS 13 or later and Swift 6. See [local signing guidance](../docs/SIGNING.md) for choosing an Apple-issued identity. A self-signed certificate can pass signature checks and still fail the Keychain continuity check.
+
+The script compiles two changed versions of `SigningContinuityProbe.swift`, signs them with the same identity and bundle identifier, and verifies that their code hashes differ while their default certificate-anchored designated requirements match. Version A creates one non-secret generic-password fixture, then version B replaces the executable at the same path and attempts to read and delete that fixture. All probe Keychain operations disable authentication UI and use an exact, fresh UUID-qualified service under `com.floattasks.signing-probe` and account `synthetic-fixture`. The separate `codesign` process may request permission to use the selected private key.
+
+This optional test intentionally accesses the real macOS Keychain for that synthetic item. It does not compile the app's OAuth code, load saved app credentials, query unrelated items, contact Google, create certificates, change trust, change item ACLs, or fall back to ad-hoc signing. A pass verifies this synthetic update on the current Mac; it does not guarantee access to existing app items or future certificate changes.
+
+Scratch files stay under ignored `.build/signing-tests`. Cleanup first tries the current version, then restores version A if needed, and checks that the synthetic item is absent. Successful runs remove their scratch directory. Failed runs retain diagnostic files; a cleanup failure also prints the exact synthetic service/account. Those files can contain local signing-certificate metadata, so keep them out of commits. If cleanup is interrupted, `service.txt` identifies the one synthetic item, and the retained probe's `delete` action can remove it without broadening any Keychain permissions.
+
 ## Optional native scroll layout test
 
 Run `./tests/run-scroll.sh` in a logged-in macOS desktop session. It is separate from `run.sh` and is not intended for headless CI.

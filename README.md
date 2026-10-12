@@ -31,7 +31,9 @@ cd google-tasks-mac-desktop-floating-app
 open "dist/Float Tasks.app"
 ```
 
-The script builds for the current Mac’s architecture; set `TARGET_ARCH=arm64` or `TARGET_ARCH=x86_64` to choose another supported target. It uses Apple’s frameworks without third-party package dependencies. The resulting app is an **ad-hoc signed developer build**, not an Apple-notarized release.
+The script builds for the current Mac’s architecture; set `TARGET_ARCH=arm64` or `TARGET_ARCH=x86_64` to choose another supported target. It uses Apple’s frameworks without third-party package dependencies. With no signing configuration, it produces an **ad-hoc signed developer build** and warns that updates may prompt for Keychain access again. These builds are not Apple-notarized releases.
+
+For regular use, configure an Apple-issued **Apple Development** or **Developer ID Application** identity as described in [Local signing](docs/SIGNING.md). Supply its full SHA-1 fingerprint through `CODE_SIGN_IDENTITY` or the ignored `.codesign-identity` file. Self-signed certificates can still prompt after updates on modern macOS; a stable signature alone does not guarantee persistent Keychain access. Invalid configuration or signing errors stop the build; an existing certificate-signed app is never silently replaced with an ad-hoc build.
 
 The app starts in the menu bar without a Dock icon or an automatically opened panel. Click the checklist icon to show it. You can move the built app to Applications in Finder.
 

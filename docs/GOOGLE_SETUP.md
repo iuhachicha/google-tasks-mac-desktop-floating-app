@@ -62,5 +62,6 @@ Google documents a [verification exception for personal-use apps with fewer than
 | Tasks are visible but editing is unavailable | Choose Enable editing and grant the `tasks` permission; an old read-only token cannot write. |
 | A write may have succeeded despite a connection error | Refresh and inspect the task before retrying. The app does not automatically repeat writes. |
 | Keychain access fails | Unlock your login keychain and follow the app’s error message. |
+| macOS asks for Keychain access after every app update | Follow [Local signing](SIGNING.md) using an Apple-issued development or Developer ID identity. Self-signed certificates can still prompt after updates. Keychain approval is separate from Google consent. |
 
 Use **Disconnect** to stop syncing and delete the app’s saved tokens and local task snapshot. Disconnect does not delete Google Tasks or revoke permission at Google; you can separately remove the authorization from your Google Account. See [Privacy](PRIVACY.md).

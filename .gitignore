@@ -8,6 +8,12 @@ dist/
 .idea/
 .vscode/
 
+# Local signing identity selection and certificate exports
+.codesign-identity
+*.cer
+*.crt
+*.der
+
 # Local Google configuration, credentials, and cached task data
 .env
 .env.*
