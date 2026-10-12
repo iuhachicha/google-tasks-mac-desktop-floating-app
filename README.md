@@ -1,3 +1,5 @@
+<img src="Assets/FloatTasks.png" width="128" height="128" alt="Float Tasks icon: a white checkmark on floating frosted task cards over a jade tile">
+
 # Float Tasks
 
 A small native macOS menu-bar app that displays Google Tasks lists vertically in a translucent floating panel.

@@ -46,7 +46,9 @@ struct RootView: View {
                     .frame(maxHeight: .infinity)
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(spacing: 10) {
+                    // Measure every list card up front so its variable height
+                    // cannot trigger repeated scroll-offset corrections at the bottom.
+                    VStack(spacing: 10) {
                         if store.filteredLists.isEmpty {
                             Text("No matching tasks")
                                 .font(.system(size: 12))

@@ -16,7 +16,20 @@ mkdir -p "$root/.build" "$root/dist"
 stage="$(mktemp -d "$root/.build/app.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 bundle="$stage/Float Tasks.app"
-mkdir -p "$bundle/Contents/MacOS"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+
+# Package the original transparent PNG at macOS's standard icon sizes. sips
+# preserves its alpha channel; generated iconset/ICNS files stay in build output.
+iconset="$stage/FloatTasks.iconset"
+mkdir -p "$iconset"
+for size in 16 32 128 256 512; do
+    sips -z "$size" "$size" "$root/Assets/FloatTasks.png" \
+        --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    double_size=$((size * 2))
+    sips -z "$double_size" "$double_size" "$root/Assets/FloatTasks.png" \
+        --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$iconset" -o "$bundle/Contents/Resources/FloatTasks.icns"
 
 xcrun swiftc -O -swift-version 6 -target "$arch-apple-macosx13.0" \
     "$root/Sources/Models.swift" \
@@ -37,6 +50,7 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>Float Tasks</string>
 <key>CFBundleIdentifier</key><string>com.iuhachicha.floattasks</string>
 <key>CFBundleExecutable</key><string>FloatTasks</string>
+<key>CFBundleIconFile</key><string>FloatTasks.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>CFBundleVersion</key><string>1</string>

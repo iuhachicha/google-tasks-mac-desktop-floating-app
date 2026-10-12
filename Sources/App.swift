@@ -53,6 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isReleasedWhenClosed = false
         panel.delegate = self
         let hosting = NSHostingView(rootView: AppRoot(store: store, state: state, delegate: self))
+        // AppKit owns this panel's size; scrolling content must not feed its
+        // changing measurements back into the hosting view's size constraints.
+        hosting.sizingOptions = []
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = hosting
